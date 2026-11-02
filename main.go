@@ -52,11 +52,16 @@ const executorProviderID = "cpa-combo-router-executor"
 var currentConfig atomic.Value
 
 type comboConfig struct {
-	Enabled       bool                        `yaml:"enabled"`
-	ModelChains   map[string][]comboCandidate `yaml:"model_chains"`
-	Strategies    map[string]comboStrategy    `yaml:"strategies"`
-	RetryStatuses []int                       `yaml:"retry_statuses"`
-	MaxAttempts   int                         `yaml:"max_attempts"`
+	Enabled bool `yaml:"enabled"`
+	// ContextLengths holds optional per-alias context windows in tokens.
+	// It decodes as any so a malformed entry can never abort the whole
+	// plugin.reconfigure; sanitizedContextLengths splits usable from
+	// ignorable entries afterwards.
+	ContextLengths any                         `yaml:"context_lengths"`
+	ModelChains    map[string][]comboCandidate `yaml:"model_chains"`
+	Strategies     map[string]comboStrategy    `yaml:"strategies"`
+	RetryStatuses  []int                       `yaml:"retry_statuses"`
+	MaxAttempts    int                         `yaml:"max_attempts"`
 }
 
 type comboStrategy struct {
@@ -417,8 +422,15 @@ func registerModels() ([]byte, error) {
 			aliases = append(aliases, alias)
 		}
 		sort.Strings(aliases)
+		lengths, invalid, unknown := sanitizedContextLengths(cfg)
+		if len(invalid) > 0 || len(unknown) > 0 {
+			logCombo("warn", "combo context_lengths entries ignored: fix or remove them in the plugin configuration", map[string]any{
+				"invalid_values":  strings.Join(invalid, ","),
+				"unknown_aliases": strings.Join(unknown, ","),
+			})
+		}
 		for _, alias := range aliases {
-			models = append(models, pluginapi.ModelInfo{
+			info := pluginapi.ModelInfo{
 				ID:                         alias,
 				Object:                     "model",
 				OwnedBy:                    pluginID,
@@ -426,7 +438,11 @@ func registerModels() ([]byte, error) {
 				Name:                       alias,
 				SupportedGenerationMethods: []string{"chat"},
 				UserDefined:                true,
-			})
+			}
+			if length := lengths[alias]; length > 0 {
+				info.ContextLength = length
+			}
+			models = append(models, info)
 		}
 	}
 	return okEnvelope(pluginapi.ModelRegistrationResponse{Provider: executorProviderID, Models: models})

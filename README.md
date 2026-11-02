@@ -12,7 +12,7 @@ Native CLIProxyAPI plugin that exposes explicitly configured combo model aliases
 - Only configured aliases are intercepted; ordinary model IDs pass through untouched.
 - The plugin registers a CPA dashboard menu page, **Combo Router**, with controls to create/rename/delete aliases, add/edit/reorder/remove ordered model candidates, enable/disable routing, and save settings. Candidate models and the Smart selector model can be searched from one shared catalog loaded through the aggregate `/v1/models` request, or entered directly as custom IDs. CPA requires a client API key for this endpoint, so the dashboard provides a separate inline field for it, distinct from the management key. The key is kept in tab-scoped `sessionStorage` so navigation/reloads in the same tab do not prompt again; it is removed when the tab session ends or the user clicks **Forget key**. Configuration reads and writes use CPA's authenticated `/v0/management/plugins/:id/config` endpoint and CPA's remembered dashboard management key if available; otherwise the page prompts for that management key for the page session. It never uses the management key for `/v1/models`.
 - Saving uses CPA's in-process configuration reload. The installed binary registers the dashboard menu/resource route when the plugin is loaded.
-- Enabled aliases are registered with CPA through `model.register` and appear in `/v1/models`.
+- Enabled aliases are registered with CPA through `model.register` and appear in `/v1/models`. Entries under `context_lengths` map an alias to the context window CPA should publish for it; the value is pure configuration and survives every reload. Malformed entries (non-positive, fractional, above 2147483647, non-numeric, or aliases without a model chain) never fail the reconfigure — a rejected reconfigure would unregister every combo alias while the rejected YAML stays persisted. They are ignored with one host.log warning naming them instead.
 - Candidate calls use CPA's host model callback. When `provider` is omitted, CPA resolves the model against its current provider catalog and credentials; an explicit `provider` pins execution when required.
 - Per-alias strategies are configured under `strategies` and can be changed in the Combo Router dashboard. `fallback` tries candidates in order; `round-robin` rotates the starting candidate and then follows the ordered fallback chain; `smart` asks a configured selector model to pick a candidate, then runs ordered fallback; `fusion` calls every panel candidate concurrently and asks a judge to synthesize successful answers.
 - `round-robin` rotation is in-memory per plugin process and resets when the plugin is reconfigured or restarted. `sticky_limit` (default 1) controls requests served from each starting candidate before rotating.
@@ -55,6 +55,12 @@ plugins:
           # judge: { model: example-judge-model }
       retry_statuses: [403, 429, 502, 503, 504]
       max_attempts: 2
+      # Optional: reported context window per alias in /v1/models
+      # (context_length). Aliases without an entry report nothing, exactly
+      # like plugin versions without this field. Values must be positive
+      # whole token counts up to 2147483647.
+      context_lengths:
+        combo-example: 524288
 ```
 
 The plugin config key must match `cpa-combo-router`. Prefer omitting `provider`: CPA then resolves the candidate model using the same catalog and credentials as a normal request. If you pin `provider`, use the CPA execution provider key, not the model catalog's `owned_by` label.
